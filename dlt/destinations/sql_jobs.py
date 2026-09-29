@@ -212,6 +212,17 @@ class SqlMergeFollowupJob(SqlFollowupJob):
         return clauses or ["1=1"]
 
     @classmethod
+    def gen_partition_clause(
+        cls,
+        table: PreparedTableSchema,
+        sql_client: SqlClientBase[Any],
+        target_alias: str = "d",
+        staging_alias: str = "s",
+    ) -> str:
+        """Return an optional target partition predicate for merge deletes."""
+        return ""
+
+    @classmethod
     def gen_key_table_clauses(
         cls,
         root_table_name: str,
@@ -578,11 +589,17 @@ class SqlMergeFollowupJob(SqlFollowupJob):
                 )
                 # if no nested tables, just delete data from root table
                 for clause in key_table_clauses:
-                    sql.append(f"DELETE {clause}")
+                    sql.append(
+                        f"DELETE {clause}{cls.gen_partition_clause(root_table, sql_client)}"
+                    )
             else:
                 key_table_clauses = cls.gen_key_table_clauses(
                     root_table_name, staging_root_table_name, key_clauses, for_delete=False
                 )
+                key_table_clauses = [
+                    f"{clause}{cls.gen_partition_clause(root_table, sql_client)}"
+                    for clause in key_table_clauses
+                ]
                 # use row_key or unique hint to create temp table with all identifiers to delete
                 row_key_column = escape_column_id(
                     cls.get_row_key_col(
@@ -714,6 +731,7 @@ class SqlMergeFollowupJob(SqlFollowupJob):
 
         # generate merge statement for root table
         on_str = " AND ".join([f"d.{c} = s.{c}" for c in primary_keys])
+        on_str += cls.gen_partition_clause(root_table, sql_client)
         root_table_column_names = list(map(escape_column_id, root_table["columns"]))
         update_str = ", ".join([c + " = " + "s." + c for c in root_table_column_names])
         col_str = ", ".join(["{alias}" + c for c in root_table_column_names])
