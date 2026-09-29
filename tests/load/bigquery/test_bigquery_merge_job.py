@@ -63,13 +63,33 @@ def test_partition_clause_converts_timestamp_to_date_literals() -> None:
     assert clause == " AND DATE(d.`event_time`) IN (DATE '2026-09-02')"
 
 
-def test_upsert_merge_includes_partition_predicate() -> None:
+def test_upsert_merge_includes_non_key_partition_predicate() -> None:
     sql = BigQueryMergeJob.gen_upsert_sql(
         [_table("date", partition=True, partition_values=["2026-09-02"])],
         _SqlClient(),  # type: ignore[arg-type]
     )
 
-    assert "ON d.`event_id` = s.`event_id` AND d.`event_time` IN (DATE '2026-09-02')" in sql[0]
+    assert "ON d.`event_id` = s.`event_id`" in sql[0]
+    assert "d.`event_time` IN (DATE '2026-09-02')" in sql[0]
+
+
+def test_upsert_merge_prunes_when_partition_is_part_of_primary_key() -> None:
+    table = _table("date", partition=True, partition_values=["2026-09-02"])
+    table["columns"]["event_time"]["primary_key"] = True
+
+    sql = BigQueryMergeJob.gen_upsert_sql([table], _SqlClient())  # type: ignore[arg-type]
+
+    assert "ON d.`event_id` = s.`event_id` AND d.`event_time` = s.`event_time`" in sql[0]
+    assert "d.`event_time` IN (DATE '2026-09-02')" in sql[0]
+
+
+def test_delete_insert_merge_keeps_partition_pruning() -> None:
+    sql = BigQueryMergeJob.gen_merge_sql(
+        [_table("date", partition=True, partition_values=["2026-09-02"])],
+        _SqlClient(),  # type: ignore[arg-type]
+    )
+
+    assert "d.`event_time` IN (DATE '2026-09-02')" in sql[0]
 
 
 def test_partition_clause_is_empty_without_partition_values() -> None:
