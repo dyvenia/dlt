@@ -223,6 +223,15 @@ class SqlMergeFollowupJob(SqlFollowupJob):
         return ""
 
     @classmethod
+    def gen_partition_clause_for_upsert(
+        cls,
+        table: PreparedTableSchema,
+        sql_client: SqlClientBase[Any],
+    ) -> str:
+        """Return a partition predicate that is safe for an upsert MERGE."""
+        return cls.gen_partition_clause(table, sql_client)
+
+    @classmethod
     def gen_key_table_clauses(
         cls,
         root_table_name: str,
@@ -731,7 +740,7 @@ class SqlMergeFollowupJob(SqlFollowupJob):
 
         # generate merge statement for root table
         on_str = " AND ".join([f"d.{c} = s.{c}" for c in primary_keys])
-        on_str += cls.gen_partition_clause(root_table, sql_client)
+        on_str += cls.gen_partition_clause_for_upsert(root_table, sql_client)
         root_table_column_names = list(map(escape_column_id, root_table["columns"]))
         update_str = ", ".join([c + " = " + "s." + c for c in root_table_column_names])
         col_str = ", ".join(["{alias}" + c for c in root_table_column_names])

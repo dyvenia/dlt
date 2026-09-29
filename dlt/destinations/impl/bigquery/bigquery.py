@@ -235,6 +235,15 @@ class BigQueryMergeJob(SqlMergeFollowupJob):
         )
         return f" AND {target_partition} IN ({literals})"
 
+    @classmethod
+    def gen_partition_clause_for_upsert(
+        cls,
+        table: PreparedTableSchema,
+        sql_client: SqlClientBase[Any],
+    ) -> str:
+        """Prune upsert targets using source and existing-key partitions."""
+        return cls.gen_partition_clause(table, sql_client)
+
 
 class BigQueryClient(SqlJobClientWithStagingDataset, SupportsStagingDestination):
     def __init__(
@@ -287,6 +296,40 @@ class BigQueryClient(SqlJobClientWithStagingDataset, SupportsStagingDestination)
                     f"FROM {staging_table_name} WHERE {escaped_column} IS NOT NULL"
                 )
                 column["partition_values"] = [row[0].isoformat() for row in values or []]
+
+                primary_keys = get_columns_names_with_prop(root_table, "primary_key")
+                merge_keys = get_columns_names_with_prop(root_table, "merge_key")
+                key_clauses = [
+                    " AND ".join(
+                        f"d.{self.sql_client.escape_column_name(key)} = "
+                        f"s.{self.sql_client.escape_column_name(key)}"
+                        for key in keys
+                    )
+                    for keys in (primary_keys, merge_keys)
+                    if keys
+                ]
+                if key_clauses:
+                    target_table_name, _ = self.sql_client.get_qualified_table_names(
+                        root_table["name"]
+                    )
+                    target_partition_expression = (
+                        f"DATE(d.{escaped_column})"
+                        if column["data_type"] == "timestamp"
+                        else f"d.{escaped_column}"
+                    )
+                    existing_values = self.sql_client.execute_sql(
+                        f"SELECT DISTINCT {target_partition_expression} "
+                        f"FROM {target_table_name} AS d "
+                        f"JOIN {staging_table_name} AS s "
+                        f"ON {' OR '.join(f'({clause})' for clause in key_clauses)} "
+                        f"WHERE d.{escaped_column} IS NOT NULL"
+                    )
+                    column["partition_values"] = list(
+                        dict.fromkeys(
+                            column["partition_values"]
+                            + [row[0].isoformat() for row in existing_values or []]
+                        )
+                    )
 
         return [BigQueryMergeJob.from_table_chain(prepared_table_chain, self.sql_client)]
 
