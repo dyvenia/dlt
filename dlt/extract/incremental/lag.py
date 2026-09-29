@@ -83,10 +83,23 @@ def apply_lag(
     """Applies lag to `last_value` but prevents it to cross `initial_value`: observing order of last_value_func"""
     # Skip lag adjustment to avoid out-of-bounds issues
     lagged_last_value = _apply_lag_to_value(lag, last_value, last_value_func)
-    if (
-        initial_value is not None
-        and last_value_func((initial_value, lagged_last_value)) == initial_value
-    ):
-        # do not cross initial_value
-        return initial_value
+    if initial_value is not None:
+        comparable_initial_value = _apply_lag_to_value(0, initial_value, last_value_func)
+        if isinstance(comparable_initial_value, str):
+            value_format = detect_datetime_format(comparable_initial_value)
+            comparable_initial_value = (
+                ensure_pendulum_date(comparable_initial_value)
+                if value_format in ("%Y%m%d", "%Y-%m-%d")
+                else ensure_pendulum_datetime_non_utc(comparable_initial_value)
+            )
+        if isinstance(comparable_initial_value, datetime) and isinstance(lagged_last_value, datetime):
+            if (comparable_initial_value.tzinfo is None) != (lagged_last_value.tzinfo is None):
+                if lagged_last_value.tzinfo is None:
+                    comparable_initial_value = comparable_initial_value.naive()
+                else:
+                    comparable_initial_value = comparable_initial_value.in_tz(lagged_last_value.tzinfo)
+        if last_value_func((comparable_initial_value, lagged_last_value)) == comparable_initial_value:
+            if isinstance(initial_value, str) and isinstance(last_value, str):
+                return initial_value
+            return comparable_initial_value  # type: ignore[return-value]
     return lagged_last_value  # type: ignore[no-any-return]

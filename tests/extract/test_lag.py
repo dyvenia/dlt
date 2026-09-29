@@ -5,7 +5,20 @@ from typing import Any, Callable, Union
 from dlt.common.incremental.typing import LastValueFunc
 from dlt.common.pendulum import pendulum
 from dlt.common.time import ensure_pendulum_date, ensure_pendulum_datetime_non_utc
-from dlt.extract.incremental.lag import _apply_lag_to_value
+from dlt.extract.incremental.lag import _apply_lag_to_value, apply_lag
+
+
+def test_apply_lag_normalizes_initial_timezone_for_naive_state() -> None:
+    """A timezone-aware initial value must compare safely with naive state."""
+    result = apply_lag(
+        5 * 24 * 60 * 60,
+        "2025-01-01T00:00:00Z",
+        datetime(2025, 1, 6),
+        max,
+    )
+
+    assert result == datetime(2025, 1, 1)
+    assert result.tzinfo is None
 
 
 @pytest.mark.parametrize(
